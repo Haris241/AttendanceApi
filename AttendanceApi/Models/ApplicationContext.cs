@@ -6,14 +6,19 @@ namespace AttendanceApi.Models;
 
 public partial class ApplicationContext : DbContext
 {
-    public ApplicationContext()
+    private readonly IConfiguration _configuration;
+
+    public ApplicationContext(IConfiguration configuration)
     {
+        _configuration = configuration;
     }
 
-    public ApplicationContext(DbContextOptions<ApplicationContext> options)
+    public ApplicationContext(DbContextOptions<ApplicationContext> options, IConfiguration configuration)
         : base(options)
     {
+        _configuration = configuration;
     }
+
 
     public virtual DbSet<EmpAttendanceDatum> EmpAttendanceData { get; set; }
 
@@ -33,7 +38,7 @@ public partial class ApplicationContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
 #warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
-        => optionsBuilder.UseSqlServer("Server=Harry;Database=TaigaApparel;Trusted_Connection=True;TrustServerCertificate=True;");
+        => optionsBuilder.UseSqlServer(_configuration.GetConnectionString("DefaultConnection"));
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -98,21 +103,7 @@ public partial class ApplicationContext : DbContext
                 .IsUnicode(false);
         });
 
-        modelBuilder.Entity<Employee>(entity =>
-        {
-            entity
-                .HasNoKey()
-                .ToTable("Employee");
-
-            entity.Property(e => e.EmpId).HasColumnName("EmpID");
-            entity.Property(e => e.EmployeeName)
-                .HasMaxLength(50)
-                .IsUnicode(false);
-            entity.Property(e => e.MachineName)
-                .HasMaxLength(50)
-                .IsUnicode(false);
-        });
-
+      
         modelBuilder.Entity<EmployeeAttRecord>(entity =>
         {
             entity

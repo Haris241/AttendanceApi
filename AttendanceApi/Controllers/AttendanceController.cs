@@ -2,8 +2,11 @@
 using AttendanceApi.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Xml.Linq;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 
@@ -45,7 +48,7 @@ namespace AttendanceApi.Controllers
                             punch.TimeOut = nextDayPunch.TimeIn;
                         }
                     }
-                    else if (timeIn.Hour >= 7 && timeIn.Hour <= 9 && timeOut.Hour >= 20 && timeOut.Hour <= 23)
+                    else if (timeIn.Hour >= 7 && timeIn.Hour <= 9 && timeOut.Hour >= 21 && timeOut.Hour <= 23)
                     {
                         punch.TimeIn = timeOut;
                         var nextDayPunch = punches.FirstOrDefault(p => p.UserDate == userDate.AddDays(1) && p.EmpId == punch.EmpId);
@@ -70,21 +73,50 @@ namespace AttendanceApi.Controllers
                 return Ok(new { success = false, message = ex.Message });
             }
         }
-        [HttpGet]
+
+
+        [HttpPost("Utility")]
         public IActionResult Fetch([FromQuery] DateOnly start, [FromQuery] DateOnly end)
         {
             try
             {
-                var punches = db.Employees
-                    .Where(e => e.UserDate >= start
-                             && e.UserDate <= end.AddDays(1) 
-                          )
+                var connectionString = db.Database.GetConnectionString();
+
+               
+                var createTableSql = @"
+        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Employees' AND xtype='U')
+        CREATE TABLE [dbo].[Employees] (
+            [Id] INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            [EmpId] INT NULL,
+            [EmployeeName] NVARCHAR(255) NULL,
+            [Date] DATE NULL,
+            [UserDate] DATE NULL,
+            [TimeIn] TIME NULL,
+            [TimeOut] TIME NULL,
+            [MachineName] NVARCHAR(255) NULL
+        );";
+
+               
+                using (var connection = new SqlConnection(connectionString))
+                {
+                    connection.Open();
+                    using (var command = new SqlCommand(createTableSql, connection))
+                    {
+                        command.ExecuteNonQuery();
+                    }
+                }
+              
+
+
+                // Fetch TaigaTesting records in the date range
+                var punches = db.TaigaTestings
+                    .Where(e => e.UserDate >= start && e.UserDate <= end)
                     .OrderBy(e => e.UserDate)
                     .ToList();
 
                 foreach (var punch in punches)
                 {
-                    // Skip if TimeIn or TimeOut is null
+                    // Skip if required fields are missing
                     if (!punch.TimeIn.HasValue || !punch.TimeOut.HasValue || !punch.UserDate.HasValue)
                         continue;
 
@@ -92,45 +124,74 @@ namespace AttendanceApi.Controllers
                     var timeOut = punch.TimeOut.Value;
                     var userDate = punch.UserDate.Value;
 
+                    // Initialize corrected time values
+                    var correctedTimeIn = timeIn;
+                    var correctedTimeOut = timeOut;
+
+                    // Apply shift correction logic
                     if (timeIn.Hour >= 0 && timeIn.Hour <= 6)
                     {
-                        punch.TimeIn = timeOut;
-                        var nextDayPunch = punches.FirstOrDefault(p => p.UserDate == userDate.AddDays(1) && p.EmpId == punch.EmpId);
+                        correctedTimeIn = timeOut;
+
+                        var nextDayPunch = punches.FirstOrDefault(p =>
+                            p.UserDate == userDate.AddDays(1) && p.EmpId == punch.EmpId);
 
                         if (nextDayPunch != null && nextDayPunch.TimeIn.HasValue)
                         {
-                            punch.TimeOut = nextDayPunch.TimeIn;
+                            correctedTimeOut = nextDayPunch.TimeIn.Value;
                         }
                     }
-                    else if (timeIn.Hour >= 7 && timeIn.Hour <= 9 && timeOut.Hour >= 20 && timeOut.Hour <= 23)
+                    else if (timeIn.Hour >= 7 && timeIn.Hour <= 9 && timeOut.Hour >= 21 && timeOut.Hour <= 23)
                     {
-                        punch.TimeIn = timeOut;
-                        var nextDayPunch = punches.FirstOrDefault(p => p.UserDate == userDate.AddDays(1) && p.EmpId == punch.EmpId);
+                        correctedTimeIn = timeOut;
+
+                        var nextDayPunch = punches.FirstOrDefault(p =>
+                            p.UserDate == userDate.AddDays(1) && p.EmpId == punch.EmpId);
 
                         if (nextDayPunch != null && nextDayPunch.TimeIn.HasValue)
                         {
-                            punch.TimeOut = nextDayPunch.TimeIn;
+                            correctedTimeOut = nextDayPunch.TimeIn.Value;
                         }
+                    }
 
-                    }
-                    else
+                    // Create a new Employee record with corrected times
+                    var employee = new Employee
                     {
-                        punch.TimeIn = timeIn;
-                        punch.TimeOut = timeOut;
-                    }
+                        EmpId = punch.EmpId,
+                        EmployeeName = punch.EmployeeName,
+                        Date = punch.Date,
+                        UserDate = punch.UserDate,
+                        TimeIn = correctedTimeIn,
+                        TimeOut = correctedTimeOut,
+                        MachineName = punch.MachineName
+                    };
+
+                    db.Employees.Add(employee);
                 }
 
-                return Ok(new { success = true, records = punches });
+                db.SaveChanges();
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Corrected data inserted into Employee table."
+                });
             }
             catch (Exception ex)
             {
-                return Ok(new { success = false, message = ex.Message });
+                return Ok(new
+                {
+                    success = false,
+                    message = "Error occurred.",
+                    error = ex.Message
+                });
             }
         }
-//        select* from Employee where UserDate between '2025-08-01' and '2025-08-05'
-//order by UserDate
 
-      
+        //        select* from Employee where UserDate between '2025-08-01' and '2025-08-05'
+        //order by UserDate
+
+
 
     }
 }
